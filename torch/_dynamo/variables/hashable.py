@@ -393,6 +393,16 @@ class HashableTracker:
         self.vt = vt
 
     @classmethod
+    def from_known_hash(cls, vt: VariableTracker, hash_value: int) -> "HashableTracker":
+        # Only for an exact-int key already hashed by its source dictionary.
+        # Keep the key lazy; hashing it in user code must still specialize it.
+        result = cls.__new__(cls)
+        result.vt = vt
+        result._hash = hash_value
+        result._hash_is_identity = False
+        return result
+
+    @classmethod
     def _maybe_constant_torch_size(cls, vt: VariableTracker) -> object:
         from .lists import SizeVariable
         from .tensor import TensorVariable

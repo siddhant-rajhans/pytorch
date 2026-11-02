@@ -5580,6 +5580,8 @@ class UserDefinedFrozensetVariable(UserDefinedObjectVariable, FrozensetVariable)
             if init_args:
                 arg = init_args[0]
                 if isinstance(arg, (SetVariable, ConstDictVariable)):
+                    if isinstance(arg, variables.NNModuleHooksDictVariable):
+                        arg.install_key_escape_guard()
                     items = list(arg.items.keys())
                 else:
                     items = unpack_iterable(tx, arg)
