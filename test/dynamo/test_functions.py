@@ -7595,7 +7595,15 @@ class GraphModule(torch.nn.Module):
 
     @parametrize(
         "operation",
-        ["lookup", "merge", "union", "intersection", "difference", "compare"],
+        [
+            "lookup",
+            "merge",
+            "union",
+            "intersection",
+            "difference",
+            "compare",
+            "dict_compare",
+        ],
     )
     def test_bound_builtin_method_cross_container_collisions(self, operation):
         class Key:
@@ -7616,6 +7624,8 @@ class GraphModule(torch.nn.Module):
                 mapping = {method: 1}
                 mapping.update({key: 2})
                 return x + len(mapping)
+            if operation == "dict_compare":
+                return x + ({method: 1} == {key: 1})
             left, right = {method}, {key}
             if operation == "compare":
                 return x + (left == right)
