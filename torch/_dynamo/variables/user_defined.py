@@ -121,7 +121,12 @@ from .base import (
     VariableTracker,
 )
 from .constant import ConstantVariable
-from .dicts import ConstDictVariable, OrderedDictVariable, pydict_check
+from .dicts import (
+    ConstDictVariable,
+    OrderedDictVariable,
+    pydict_check,
+    pyfrozendict_check,
+)
 from .exception import ExceptionVariable
 from .hashable import HashableTracker
 from .lists import DequeVariable, ListVariable, TupleVariable
@@ -5368,6 +5373,10 @@ class DefaultDictVariable(ConstDictVariable):
         if not isinstance(self_, DefaultDictVariable):
             raise AssertionError(f"Expected DefaultDictVariable, got {type(self_)}")
 
+        if pyfrozendict_check(other_):
+            return variables.FrozenDictVariable.frozen_deferred_operator(
+                other_, tx, [], {}
+            )
         if not pydict_check(other_):
             return variables.ConstantVariable.create(NotImplemented)
 
