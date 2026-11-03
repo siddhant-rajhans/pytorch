@@ -13,6 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 from tools.testing.llm_td import select_tests
 from tools.testing.llm_td.selection import needs_run_all, normalize_test_name, Selection
+from tools.testing.test_run import TestRun
 
 
 CANDIDATES = {
@@ -111,6 +112,45 @@ class TestSelection(unittest.TestCase):
         sel = Selection.from_model_output(out, CANDIDATES, ["torch/a.py"])
         self.assertEqual(sel.files, {"test_ops"})
         self.assertFalse(sel.run_all)
+
+
+class TestSplit(unittest.TestCase):
+    def split(self, sel: Selection, ranked: list[TestRun], scores: dict, times: dict):
+        include, exclude, hedged = sel.split(
+            ranked, lambda x: scores.get(str(x), 0), times, "default"
+        )
+        return [str(x) for x in include], [str(x) for x in exclude], hedged
+
+    def test_hedge_is_greedy_in_rank_order(self) -> None:
+        ranked = [TestRun(f) for f in ("a", "big", "small", "unscored", "untimed")]
+        scores = {"a": 1, "big": 0.9, "small": 0.8, "untimed": 0.7}
+        times = {"a": 10, "big": 60, "small": 20, "unscored": 910, "untimed": 0}
+        # Budget is 5% of 1000s = 50s: big does not fit, small still does.
+        include, exclude, hedged = self.split(
+            Selection(files={"a"}), ranked, scores, times
+        )
+        self.assertEqual(include, ["a", "small"])
+        self.assertEqual(exclude, ["big", "unscored", "untimed"])
+        self.assertEqual(hedged, {"small"})
+
+    def test_partial_runs_of_a_file_stay_together(self) -> None:
+        ranked = [
+            TestRun("f", included=["A"]),
+            TestRun("g"),
+            TestRun("f", excluded=["A"]),
+        ]
+        scores = {str(x): 1 for x in ranked if x.test_file == "f"}
+        times = {"f": 40, "g": 960}
+        include, exclude, hedged = self.split(Selection(), ranked, scores, times)
+        self.assertEqual(include, [str(ranked[0]), str(ranked[2])])
+        self.assertEqual(exclude, ["g"])
+        self.assertEqual(hedged, {"f"})
+
+    def test_run_all_and_sweeps_take_everything(self) -> None:
+        ranked = [TestRun("a"), TestRun("b")]
+        for sel in (Selection(run_all=True), Selection(sweeps={"default"})):
+            include, exclude, hedged = self.split(sel, ranked, {}, {"a": 1, "b": 1})
+            self.assertEqual((include, exclude, hedged), (["a", "b"], [], set()))
 
 
 class TestPrompt(unittest.TestCase):

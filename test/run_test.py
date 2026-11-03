@@ -65,6 +65,7 @@ from tools.testing.discover_tests import (
     TESTS,
 )
 from tools.testing.do_target_determination_for_s3 import import_results
+from tools.testing.llm_td.selection import LLM_TD_SELECTION_FILE, Selection
 from tools.testing.target_determination.gen_artifact import gen_ci_artifact
 from tools.testing.target_determination.heuristics.previously_failed_in_pr import (
     gen_additional_test_failures_file,
@@ -2552,6 +2553,48 @@ def main():
     )
     include, exclude = test_prioritizations.get_top_per_tests(percent_to_run)
 
+    llm_selection = Selection.load(
+        REPO_ROOT / ADDITIONAL_CI_FILES_FOLDER / LLM_TD_SELECTION_FILE
+    )
+    # Written by the llm-test-selection workflow; see tools/testing/llm_td.
+    llm_enforced = False
+    td_include: set[str] = set()
+    llm_hedged: set[str] = set()
+    if llm_selection is not None:
+        ranked = include + exclude
+        td_include = {x.test_file for x in include}
+        # Partial TestRuns of one file share its time, so account per file.
+        files = list(dict.fromkeys(x.test_file for x in ranked))
+        covered = {f for f in files if llm_selection.covers(f, TEST_CONFIG)}
+        file_time = {f: test_file_times_dict.get(f, 0) for f in files}
+        llm_enforced = (
+            options.enable_td and llm_selection.enforce and get_pr_number() is not None
+        )
+        llm_include, llm_exclude, llm_hedged = llm_selection.split(
+            ranked, test_prioritizations.get_score, file_time, TEST_CONFIG
+        )
+        if llm_enforced:
+            include, exclude = llm_include, llm_exclude
+            print_to_stderr(
+                f"LLM selection: running {len(covered | llm_hedged)} of {len(files)} test files ({len(covered)} selected)"
+            )
+        if IS_CI:
+            emit_metric(
+                "llm_td_shadow_selection",
+                {
+                    "enforced": llm_enforced,
+                    "td_enabled": options.enable_td,
+                    "run_all": llm_selection.run_all,
+                    "num_tests": len(files),
+                    "num_covered": len(covered),
+                    "num_td_include": len(td_include),
+                    "num_hedged": len(llm_hedged),
+                    "time_total": sum(file_time.values()),
+                    "time_covered": sum(file_time[f] for f in covered),
+                    "time_hedged": sum(file_time[f] for f in llm_hedged),
+                },
+            )
+
     test_batch = TestBatch("tests to run", include, False)
     test_batch_exclude = TestBatch("excluded", exclude, True)
     if IS_CI:
@@ -2611,6 +2654,23 @@ def main():
                         **test_stats,
                     },
                 )
+                # Only tests that ran can fail, so with TD on these are failures in
+                # TD's include (shadow) or in the selection plus hedge (enforced).
+                if llm_selection is not None:
+                    emit_metric(
+                        "llm_td_shadow_failure",
+                        {
+                            "failure": str(test),
+                            "test_config": TEST_CONFIG,
+                            "covered": llm_selection.covers(
+                                test.test_file, TEST_CONFIG
+                            ),
+                            "enforced": llm_enforced,
+                            "td_enabled": options.enable_td,
+                            "in_td_include": test.test_file in td_include,
+                            "hedged": test.test_file in llm_hedged,
+                        },
+                    )
             gen_additional_test_failures_file(
                 [test.test_file for test, _ in all_failures]
             )
